@@ -180,19 +180,33 @@ st.markdown("<p style='text-align: center; color: #4A5568;'>Plataforma automatiz
 
 verificar_reinicio_diario()
 consolidado_path = os.path.join(OUTPUT_DIR, "consolidado_anulaciones_dia.xlsx")
+
+# Lectura y conteo por sedes
 conteo_hoy = 0
+conteos_sedes = {sede: 0 for sede in SEDES}
+
 if os.path.exists(consolidado_path):
     wb_temp = openpyxl.load_workbook(consolidado_path)
     ws_temp = wb_temp.active
     f = 4
     while ws_temp.cell(row=f, column=1).value is not None:
         conteo_hoy += 1
+        s = ws_temp.cell(row=f, column=2).value
+        if s in conteos_sedes:
+            conteos_sedes[s] += 1
         f += 1
 
-# Métrica elegante centrada
-col_metrica1, col_metrica2, col_metrica3 = st.columns([1, 2, 1])
-with col_metrica2:
-    st.metric(label="📊 Anulaciones Registradas Hoy", value=conteo_hoy)
+# Métricas elegantes por sede
+st.markdown("### 📊 Resumen Diario de Anulaciones")
+col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+with col_m1:
+    st.metric(label="Total General", value=conteo_hoy)
+with col_m2:
+    st.metric(label="Espinal", value=conteos_sedes["VIVA 1A IPS ESPINAL"])
+with col_m3:
+    st.metric(label="Guamo", value=conteos_sedes["VIVA 1A IPS GUAMO"])
+with col_m4:
+    st.metric(label="Mariquita", value=conteos_sedes["VIVA 1A IPS MARIQUITA"])
 
 st.markdown("---")
 
@@ -241,6 +255,7 @@ if enviar:
         st.success(f"¡Proceso completado con éxito! Total de registros hoy: {total}")
         st.session_state['last_individual'] = path_individual
         st.session_state['last_consolidado'] = path_consolidado
+        st.rerun()
 
 st.markdown("---")
 st.subheader("📥 Zona de Descargas")
@@ -261,15 +276,68 @@ with col_d1:
 
 with col_d2:
     if os.path.exists(consolidado_path):
-        with open(consolidado_path, "rb") as file:
-            st.download_button(
-                label="📊 Descargar Consolidado del Día",
-                data=file,
-                file_name="consolidado_anulaciones_dia.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+        # Selector de sede para descarga filtrada
+        sede_seleccionada_descarga = st.selectbox("Filtrar consolidado por Sede:", ["Todas las Sedes"] + SEDES)
+        
+        if sede_seleccionada_descarga == "Todas las Sedes":
+            with open(consolidado_path, "rb") as file:
+                st.download_button(
+                    label="📊 Descargar Consolidado General",
+                    data=file,
+                    file_name="consolidado_anulaciones_dia.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+        else:
+            # Crear un archivo filtrado temporalmente para la sede seleccionada
+            wb_orig = openpyxl.load_workbook(consolidado_path)
+            ws_orig = wb_orig.active
+            
+            template_path = os.path.join(TEMPLATE_DIR, "Formato para solicitud de anulaciones.xlsx")
+            wb_filtrado = openpyxl.load_workbook(template_path)
+            ws_filtrado = wb_filtrado["Formato Solicitud anulacion"] if "Formato Solicitud anulacion" in wb_filtrado.sheetnames else wb_filtrado.active
+            
+            # Limpiar filas existentes en el template filtrado desde la fila 4
+            f_clean = 4
+            while ws_filtrado.cell(row=f_clean, column=1).value is not None:
+                for c in range(1, 12):
+                    ws_filtrado.cell(row=f_clean, column=c, value=None)
+                f_clean += 1
+                
+            f_orig = 4
+            f_dest = 4
+            while ws_orig.cell(row=f_orig, column=1).value is not None:
+                if ws_orig.cell(row=f_orig, column=2).value == sede_seleccionada_descarga:
+                    for c in range(1, 12):
+                        ws_filtrado.cell(row=f_dest, column=c, value=ws_orig.cell(row=f_orig, column=c).value)
+                    f_dest += 1
+                f_orig += 1
+                
+            temp_filtrado_path = os.path.join(OUTPUT_DIR, f"consolidado_{sede_seleccionada_descarga.replace(' ', '_')}.xlsx")
+            wb_filtrado.save(temp_filtrado_path)
+            
+            with open(temp_filtrado_path, "rb") as file:
+                st.download_button(
+                    label=f"📊 Descargar Consolidado ({sede_seleccionada_descarga.split()[-1]})",
+                    data=file,
+                    file_name=f"consolidado_{sede_seleccionada_descarga.replace(' ', '_')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
     else:
         st.warning("Sin registros consolidados hoy.")
+
+# Sección de administración / limpieza diaria manual
+st.markdown("---")
+with st.expander("⚙️ Opciones de Administración (Reinicio Diario)"):
+    st.write("Si necesitas reiniciar los contadores y limpiar el consolidado actual de forma manual para comenzar un nuevo turno o día, haz clic en el siguiente botón:")
+    if st.button("🗑️ Limpiar y Reiniciar Día (Borrar Consolidado)", type="secondary"):
+        if os.path.exists(consolidado_path):
+            os.remove(consolidado_path)
+        if 'last_consolidado' in st.session_state:
+            del st.session_state['last_consolidado']
+        if 'last_individual' in st.session_state:
+            del st.session_state['last_individual']
+        st.success("¡Consolidado y contadores reiniciados a cero exitosamente!")
+        st.rerun()
 
 # Pie de página fijo corporativo con tu crédito
 st.markdown("""
